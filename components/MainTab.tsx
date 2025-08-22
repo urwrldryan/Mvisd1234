@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { AlertMessage, User } from '../types.ts';
 
@@ -72,14 +71,13 @@ const UploadForm: React.FC<{
 
 const AuthForm: React.FC<{
     onRegister: (username: string, password: string) => void;
-    onLogin: (username: string, password: string, rememberMe: boolean) => void;
+    onLogin: (username: string, password: string) => void;
     setAlert: (alert: AlertMessage | null) => void;
 }> = ({ onRegister, onLogin, setAlert }) => {
     const [isLogin, setIsLogin] = useState(true);
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
-    const [rememberMe, setRememberMe] = useState(true);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -88,7 +86,7 @@ const AuthForm: React.FC<{
             return;
         }
         if (isLogin) {
-            onLogin(username, password, rememberMe);
+            onLogin(username, password);
         } else {
             if (password !== confirmPassword) {
                 setAlert({ message: 'Passwords do not match.', type: 'error' });
@@ -121,21 +119,6 @@ const AuthForm: React.FC<{
                         <input id="confirm-password" type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} required className="w-full px-4 py-2 bg-gray-700/50 border border-gray-600 text-slate-100 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                     </div>
                 )}
-                {isLogin && (
-                    <div className="flex items-center">
-                        <input
-                            id="remember-me"
-                            name="remember-me"
-                            type="checkbox"
-                            checked={rememberMe}
-                            onChange={(e) => setRememberMe(e.target.checked)}
-                            className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-500 bg-gray-700 rounded"
-                        />
-                        <label htmlFor="remember-me" className="ml-2 block text-sm text-slate-300">
-                            Remember me
-                        </label>
-                    </div>
-                )}
                 <button type="submit" className="w-full px-4 py-3 font-semibold text-white bg-indigo-600 rounded-md shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
                     {isLogin ? 'Login' : 'Register'}
                 </button>
@@ -153,7 +136,7 @@ const AuthForm: React.FC<{
 interface MainTabProps {
   currentUser: User | null;
   onRegister: (username: string, password: string) => void;
-  onLogin: (username: string, password: string, rememberMe: boolean) => void;
+  onLogin: (username: string, password: string) => void;
   onUpload: (url: string) => void;
   setAlert: (alert: AlertMessage | null) => void;
 }

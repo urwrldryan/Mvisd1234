@@ -30,7 +30,7 @@ const ChatTab: React.FC<ChatTabProps> = ({ messages, currentUser, onSendMessage,
       <div className="flex-shrink-0 mb-4">
         <h2 className="text-2xl font-bold text-slate-100">Community Chat</h2>
         {!currentUser && (
-            <p className="text-sm text-slate-400">You are chatting as a guest. <button onClick={() => setActiveTab('main')} className="font-semibold text-indigo-400 hover:underline">Login</button> to save your conversations.</p>
+            <p className="text-sm text-slate-400">You are chatting as a Guest. Your messages are visible to everyone. <button onClick={() => setActiveTab('main')} className="font-semibold text-indigo-400 hover:underline">Login</button> to chat with your username.</p>
         )}
       </div>
 

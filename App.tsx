@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Tab, UploadItem, AlertMessage, User, AuditLogEntry, UserRole, ChatMessage } from './types.ts';
+import * as api from './api.ts';
 import MainTab from './components/MainTab.tsx';
 import CommunityTab from './components/CommunityTab.tsx';
 import AdminTab from './components/AdminTab.tsx';
@@ -9,43 +10,6 @@ import Tabs from './components/Tabs.tsx';
 import Alert from './components/Alert.tsx';
 import SyncStatusIndicator from './components/SyncStatusIndicator.tsx';
 import GuestModeBanner from './components/GuestModeBanner.tsx';
-
-const getFromStorage = <T,>(storage: Storage, key: string, defaultValue: T): T => {
-  try {
-    const item = storage.getItem(key);
-    if (!item) return defaultValue;
-
-    const data = JSON.parse(item);
-    
-    if ((key === 'auditLog' || key === 'chatMessages') && Array.isArray(data)) {
-      return data.map((log: any) => ({
-        ...log,
-        timestamp: new Date(log.timestamp),
-      })) as T;
-    }
-    
-    return data;
-  } catch (error) {
-    console.warn(`Error reading localStorage key “${key}”:`, error);
-    return defaultValue;
-  }
-};
-
-const getInitialUser = (): User | null => {
-    try {
-        const localUserItem = localStorage.getItem('currentUser');
-        if (localUserItem) return JSON.parse(localUserItem);
-        
-        const sessionUserItem = sessionStorage.getItem('currentUser');
-        if (sessionUserItem) return JSON.parse(sessionUserItem);
-
-        return null;
-    } catch (error) {
-        console.warn(`Error reading user from storage:`, error);
-        return null;
-    }
-};
-
 
 const BackgroundAnimation: React.FC = () => (
     <div className="background-shapes" aria-hidden="true">
@@ -60,67 +24,85 @@ const BackgroundAnimation: React.FC = () => (
     </div>
 );
 
-
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('main');
   const [alert, setAlert] = useState<AlertMessage | null>(null);
-  const [currentUser, setCurrentUser] = useState<User | null>(getInitialUser);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isGuestBannerVisible, setIsGuestBannerVisible] = useState(true);
+  
+  const [uploads, setUploads] = useState<UploadItem[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'saved' | 'error'>('idle');
+  const [isAppLoading, setIsAppLoading] = useState(true);
 
   const isGuestMode = !currentUser;
-  const dataStorage = isGuestMode ? sessionStorage : localStorage;
-
-  const [uploads, setUploads] = useState<UploadItem[]>(() => getFromStorage(dataStorage, 'uploads', []));
-  const [users, setUsers] = useState<User[]>(() => getFromStorage(localStorage, 'users', [
-    { id: 1, username: 'urwrldryan', password: 'BigBooger', role: 'owner' },
-    { id: 2, username: 'sample_user', password: 'password', role: 'user' },
-  ]));
-  const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(() => getFromStorage(dataStorage, 'auditLog', []));
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => getFromStorage(dataStorage, 'chatMessages', []));
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'saved' | 'error'>('idle');
 
   const saveState = useCallback(async (key: string, data: any) => {
-    // User data is always persistent, other data depends on login state.
-    const storage = key === 'users' ? localStorage : dataStorage;
     setSyncStatus('syncing');
-    await new Promise(resolve => setTimeout(resolve, 400)); // Simulate network latency
     try {
-      storage.setItem(key, JSON.stringify(data));
+      await api.saveData(key, data, isGuestMode);
       setSyncStatus('saved');
     } catch (error) {
       console.error(`Failed to save to storage: ${key}`, error);
       setSyncStatus('error');
     }
-  }, [dataStorage]);
+  }, [isGuestMode]);
 
-  const removeState = useCallback(async (key: string) => {
-    const storage = dataStorage;
-    setSyncStatus('syncing');
-    await new Promise(resolve => setTimeout(resolve, 400));
-    try {
-      storage.removeItem(key);
-      setSyncStatus('saved');
-    } catch (error) {
-      console.error(`Failed to remove from storage: ${key}`, error);
-      setSyncStatus('error');
-    }
-  }, [dataStorage]);
-  
-  // Reload data from appropriate storage on login/logout
+  // This effect runs once on mount to establish the user session and load all data.
   useEffect(() => {
-    const newStorage = !currentUser ? sessionStorage : localStorage;
-    setUploads(getFromStorage(newStorage, 'uploads', []));
-    setChatMessages(getFromStorage(newStorage, 'chatMessages', []));
-    setAuditLog(getFromStorage(newStorage, 'auditLog', []));
-    
-    // Users are always loaded from localStorage, but we can re-fetch to be safe
-    setUsers(getFromStorage(localStorage, 'users', []));
+    const initializeApp = async () => {
+        setIsAppLoading(true);
+        const user = await api.getInitialUser();
+        setCurrentUser(user);
+        
+        const isGuest = !user;
+        const initialUsers = [
+            { id: 1, username: 'urwrldryan', password: 'BigBooger', role: 'owner' as UserRole },
+            { id: 2, username: 'sample_user', password: 'password', role: 'user' as UserRole },
+        ];
 
-    if (currentUser) {
-        setIsGuestBannerVisible(false);
-    } else {
-        setIsGuestBannerVisible(true);
-    }
+        const [uploadsData, usersData, auditLogData, chatMessagesData] = await Promise.all([
+            api.fetchData<UploadItem[]>('uploads', isGuest, []),
+            api.fetchData<User[]>('users', false, initialUsers),
+            api.fetchData<AuditLogEntry[]>('auditLog', isGuest, []),
+            api.fetchData<ChatMessage[]>('chatMessages', isGuest, []),
+        ]);
+
+        setUploads(uploadsData);
+        setUsers(usersData.length > 0 ? usersData : initialUsers);
+        setAuditLog(auditLogData);
+        setChatMessages(chatMessagesData);
+        
+        setIsGuestBannerVisible(isGuest);
+        setIsAppLoading(false);
+    };
+    initializeApp();
+  }, []);
+  
+  // Reload all data when user logs in or out
+  useEffect(() => {
+    // Skip the initial load, which is handled by the effect above
+    if (isAppLoading) return;
+
+    const reloadDataForSession = async () => {
+        setSyncStatus('syncing');
+        const [uploadsData, usersData, auditLogData, chatMessagesData] = await Promise.all([
+            api.fetchData('uploads', isGuestMode, []),
+            api.fetchData('users', false, []),
+            api.fetchData('auditLog', isGuestMode, []),
+            api.fetchData('chatMessages', isGuestMode, []),
+        ]);
+        setUploads(uploadsData);
+        setUsers(usersData);
+        setAuditLog(auditLogData);
+        setChatMessages(chatMessagesData);
+        setIsGuestBannerVisible(isGuestMode);
+        setSyncStatus('idle');
+    };
+    reloadDataForSession();
   }, [currentUser]);
 
   useEffect(() => {
@@ -131,48 +113,36 @@ const App: React.FC = () => {
   }, [syncStatus]);
   
   useEffect(() => {
-    const syncUserSession = async () => {
-      if (currentUser) {
-        const remember = localStorage.getItem('rememberUser') === 'true';
-        if (remember) {
-          localStorage.setItem('currentUser', JSON.stringify(currentUser));
-          sessionStorage.removeItem('currentUser');
-        } else {
-          sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
-          localStorage.removeItem('currentUser');
-        }
-      } else {
-        // On logout
-        sessionStorage.removeItem('currentUser');
-        localStorage.removeItem('currentUser');
-      }
-    };
-    syncUserSession();
-  }, [currentUser]);
+    // Don't sync until the app has loaded
+    if(isAppLoading) return;
+    api.syncUserSession(currentUser);
+  }, [currentUser, isAppLoading]);
 
 
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
-      // Only listen to localStorage changes for cross-tab sync (sessionStorage doesn't fire this event)
       if (e.storageArea !== localStorage) return;
       
-      if (e.key === 'chatMessages' && e.newValue) {
-        setChatMessages(getFromStorage(localStorage, 'chatMessages', []));
+      const reloadChangedData = async () => {
+          if (e.key === 'chatMessages' && e.newValue) {
+            setChatMessages(await api.fetchData('chatMessages', isGuestMode, []));
+          }
+          if (e.key === 'uploads' && e.newValue) {
+            setUploads(await api.fetchData('uploads', isGuestMode, []));
+          }
+          if (e.key === 'users' && e.newValue) {
+            setUsers(await api.fetchData('users', false, []));
+          }
+          if (e.key === 'auditLog' && e.newValue) {
+            setAuditLog(await api.fetchData('auditLog', isGuestMode, []));
+          }
       }
-      if (e.key === 'uploads' && e.newValue) {
-        setUploads(getFromStorage(localStorage, 'uploads', []));
-      }
-      if (e.key === 'users' && e.newValue) {
-        setUsers(getFromStorage(localStorage, 'users', []));
-      }
-      if (e.key === 'auditLog' && e.newValue) {
-        setAuditLog(getFromStorage(localStorage, 'auditLog', []));
-      }
+      reloadChangedData();
     };
 
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
-  }, []);
+  }, [isGuestMode]);
 
   useEffect(() => {
     if (alert) {
@@ -183,7 +153,7 @@ const App: React.FC = () => {
 
   const handleUpload = useCallback(async (url: string) => {
     if (!currentUser) {
-        setAlert({ message: 'Login to save submissions permanently. This link will be lost when you close the tab.', type: 'info' });
+        setAlert({ message: "You're submitting as a Guest. Your submission is shared, but you should log in to have it tied to your account.", type: 'info' });
     }
     const submitter = currentUser?.username || 'Guest';
     const newUpload: UploadItem = {
@@ -259,26 +229,18 @@ const App: React.FC = () => {
       }
       
       const role: UserRole = username.toLowerCase() === 'urwrldryan' ? 'owner' : 'user';
-
       const newUser: User = { id: Date.now(), username, password, role };
-      
       const updatedUsers = [...users, newUser];
       setUsers(updatedUsers);
       await saveState('users', updatedUsers);
       
-      localStorage.removeItem('rememberUser');
       setCurrentUser(newUser);
       setAlert({ message: `Welcome, ${username}! Your account has been created.`, type: 'success' });
   }, [users, saveState]);
   
-  const handleLogin = useCallback(async (username: string, password: string, rememberMe: boolean) => {
+  const handleLogin = useCallback(async (username: string, password: string) => {
       const user = users.find(u => u.username.toLowerCase() === username.toLowerCase() && u.password === password);
       if (user) {
-          if (rememberMe) {
-            localStorage.setItem('rememberUser', 'true');
-          } else {
-            localStorage.removeItem('rememberUser');
-          }
           setCurrentUser(user);
           setAlert({ message: `Welcome back, ${user.username}!`, type: 'success' });
       } else {
@@ -289,7 +251,6 @@ const App: React.FC = () => {
   const handleLogout = useCallback(async () => {
       setCurrentUser(null);
       setActiveTab('main');
-      localStorage.removeItem('rememberUser');
       setAlert({ message: 'You have been logged out.', type: 'info' });
   }, []);
   
@@ -383,6 +344,21 @@ const App: React.FC = () => {
       await saveState('users', updatedUsers);
       setAlert({ message: `User "${userToDelete.username}" has been deleted.`, type: 'success' });
   }, [currentUser, users, saveState]);
+
+  if (isAppLoading) {
+    return (
+        <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+            <div className="text-center">
+                <svg className="animate-spin h-12 w-12 text-white mx-auto mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <h1 className="text-2xl font-bold text-slate-100">Loading your space...</h1>
+                <p className="text-slate-400 mt-2">Please wait a moment.</p>
+            </div>
+        </div>
+    );
+  }
 
   return (
     <div className={`min-h-screen bg-gray-900 text-slate-200 font-sans relative isolate overflow-hidden ${isGuestMode && isGuestBannerVisible ? 'pt-16' : ''}`}>

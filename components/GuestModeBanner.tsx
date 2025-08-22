@@ -18,11 +18,11 @@ const GuestModeBanner: React.FC<GuestModeBannerProps> = ({ onDismiss, onLoginCli
         <div className="flex items-center gap-3">
           <InfoCircleIcon className="h-6 w-6 text-blue-400 flex-shrink-0" />
           <p className="text-sm">
-            <span className="font-semibold">You are in Guest Mode.</span> Your changes are temporary and will be lost when you close the tab.{' '}
+            <span className="font-semibold">You are in Guest Mode.</span> Your submissions and chats are now shared with everyone.{' '}
             <button onClick={onLoginClick} className="font-bold underline hover:text-white focus:outline-none focus:ring-2 focus:ring-blue-400 rounded">
               Log in or register
             </button>
-            {' '}to save your progress.
+            {' '}to be credited for your contributions.
           </p>
         </div>
         <button

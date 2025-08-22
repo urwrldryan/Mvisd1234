@@ -257,7 +257,10 @@ const App: React.FC = () => {
           setAlert({ message: 'Username already exists.', type: 'error' });
           return;
       }
-      const newUser: User = { id: Date.now(), username, password, role: 'user' };
+      
+      const role: UserRole = username.toLowerCase() === 'urwrldryan' ? 'owner' : 'user';
+
+      const newUser: User = { id: Date.now(), username, password, role };
       
       const updatedUsers = [...users, newUser];
       setUsers(updatedUsers);

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Tab, UploadItem, AlertMessage, User, AuditLogEntry, UserRole, ChatMessage } from './types.ts';
-import * as api from './api.ts';
+import * as firebaseService from './services/firebase.ts';
 import MainTab from './components/MainTab.tsx';
 import CommunityTab from './components/CommunityTab.tsx';
 import AdminTab from './components/AdminTab.tsx';
@@ -8,7 +8,6 @@ import ChatTab from './components/ChatTab.tsx';
 import ProfileTab from './components/ProfileTab.tsx';
 import Tabs from './components/Tabs.tsx';
 import Alert from './components/Alert.tsx';
-import SyncStatusIndicator from './components/SyncStatusIndicator.tsx';
 import GuestModeBanner from './components/GuestModeBanner.tsx';
 
 const BackgroundAnimation: React.FC = () => (
@@ -35,114 +34,32 @@ const App: React.FC = () => {
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'saved' | 'error'>('idle');
   const [isAppLoading, setIsAppLoading] = useState(true);
 
   const isGuestMode = !currentUser;
 
-  const saveState = useCallback(async (key: string, data: any) => {
-    setSyncStatus('syncing');
-    try {
-      await api.saveData(key, data, isGuestMode);
-      setSyncStatus('saved');
-    } catch (error) {
-      console.error(`Failed to save to storage: ${key}`, error);
-      setSyncStatus('error');
-    }
-  }, [isGuestMode]);
-
-  // This effect runs once on mount to establish the user session and load all data.
+  // Set up real-time listeners for all data collections on component mount.
   useEffect(() => {
-    const initializeApp = async () => {
-        setIsAppLoading(true);
-        const user = await api.getInitialUser();
-        setCurrentUser(user);
-        
-        const isGuest = !user;
-        const initialUsers = [
-            { id: 1, username: 'urwrldryan', password: 'BigBooger', role: 'owner' as UserRole },
-            { id: 2, username: 'sample_user', password: 'password', role: 'user' as UserRole },
-        ];
+    const user = firebaseService.getCurrentUser();
+    setCurrentUser(user);
+    setIsGuestBannerVisible(!user);
+    
+    // The unsubscribe functions returned by onSnapshot will be called on cleanup.
+    const unsubUploads = firebaseService.onSnapshot('uploads', (data: UploadItem[]) => setUploads(data.sort((a, b) => b.id - a.id)));
+    const unsubUsers = firebaseService.onSnapshot('users', (data: User[]) => setUsers(data));
+    const unsubAuditLog = firebaseService.onSnapshot('auditLog', (data: AuditLogEntry[]) => setAuditLog(data.sort((a,b) => b.timestamp.getTime() - a.timestamp.getTime())));
+    const unsubChat = firebaseService.onSnapshot('chatMessages', (data: ChatMessage[]) => setChatMessages(data.sort((a,b) => a.timestamp.getTime() - b.timestamp.getTime())));
 
-        const [uploadsData, usersData, auditLogData, chatMessagesData] = await Promise.all([
-            api.fetchData<UploadItem[]>('uploads', isGuest, []),
-            api.fetchData<User[]>('users', false, initialUsers),
-            api.fetchData<AuditLogEntry[]>('auditLog', isGuest, []),
-            api.fetchData<ChatMessage[]>('chatMessages', isGuest, []),
-        ]);
+    setIsAppLoading(false);
 
-        setUploads(uploadsData);
-        setUsers(usersData.length > 0 ? usersData : initialUsers);
-        setAuditLog(auditLogData);
-        setChatMessages(chatMessagesData);
-        
-        setIsGuestBannerVisible(isGuest);
-        setIsAppLoading(false);
+    // Cleanup listeners on unmount to prevent memory leaks.
+    return () => {
+      unsubUploads();
+      unsubUsers();
+      unsubAuditLog();
+      unsubChat();
     };
-    initializeApp();
   }, []);
-  
-  // Reload all data when user logs in or out
-  useEffect(() => {
-    // Skip the initial load, which is handled by the effect above
-    if (isAppLoading) return;
-
-    const reloadDataForSession = async () => {
-        setSyncStatus('syncing');
-        const [uploadsData, usersData, auditLogData, chatMessagesData] = await Promise.all([
-            api.fetchData('uploads', isGuestMode, []),
-            api.fetchData('users', false, []),
-            api.fetchData('auditLog', isGuestMode, []),
-            api.fetchData('chatMessages', isGuestMode, []),
-        ]);
-        setUploads(uploadsData);
-        setUsers(usersData);
-        setAuditLog(auditLogData);
-        setChatMessages(chatMessagesData);
-        setIsGuestBannerVisible(isGuestMode);
-        setSyncStatus('idle');
-    };
-    reloadDataForSession();
-  }, [currentUser]);
-
-  useEffect(() => {
-    if (syncStatus === 'saved' || syncStatus === 'error') {
-      const timer = setTimeout(() => setSyncStatus('idle'), 2500);
-      return () => clearTimeout(timer);
-    }
-  }, [syncStatus]);
-  
-  useEffect(() => {
-    // Don't sync until the app has loaded
-    if(isAppLoading) return;
-    api.syncUserSession(currentUser);
-  }, [currentUser, isAppLoading]);
-
-
-  useEffect(() => {
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.storageArea !== localStorage) return;
-      
-      const reloadChangedData = async () => {
-          if (e.key === 'chatMessages' && e.newValue) {
-            setChatMessages(await api.fetchData('chatMessages', isGuestMode, []));
-          }
-          if (e.key === 'uploads' && e.newValue) {
-            setUploads(await api.fetchData('uploads', isGuestMode, []));
-          }
-          if (e.key === 'users' && e.newValue) {
-            setUsers(await api.fetchData('users', false, []));
-          }
-          if (e.key === 'auditLog' && e.newValue) {
-            setAuditLog(await api.fetchData('auditLog', isGuestMode, []));
-          }
-      }
-      reloadChangedData();
-    };
-
-    window.addEventListener('storage', handleStorageChange);
-    return () => window.removeEventListener('storage', handleStorageChange);
-  }, [isGuestMode]);
 
   useEffect(() => {
     if (alert) {
@@ -156,99 +73,84 @@ const App: React.FC = () => {
         setAlert({ message: "You're submitting as a Guest. Your submission is shared, but you should log in to have it tied to your account.", type: 'info' });
     }
     const submitter = currentUser?.username || 'Guest';
-    const newUpload: UploadItem = {
-      id: Date.now(),
+    const newUpload: Omit<UploadItem, 'id'> = {
       title: url.replace(/^https?:\/\//, '').split('/')[0] || url,
       url: url,
       status: 'pending',
       description: 'A new user submission.',
       submittedBy: submitter
     };
-    const updatedUploads = [newUpload, ...uploads];
-    setUploads(updatedUploads);
-    await saveState('uploads', updatedUploads);
+    await firebaseService.addDoc('uploads', newUpload);
     
     if (currentUser) {
       setAlert({ message: 'Upload successful! Your submission is pending approval.', type: 'success' });
     }
     setActiveTab('community');
-  }, [currentUser, uploads, saveState]);
+  }, [currentUser]);
 
   const handleApprove = useCallback(async (id: number) => {
     if (!currentUser || !['admin', 'co-owner', 'owner'].includes(currentUser.role)) return;
-    let approvedItem: UploadItem | undefined;
     
-    const updatedUploads = uploads.map(item => {
-      if (item.id === id) {
-        approvedItem = { ...item, status: 'approved' };
-        return approvedItem;
-      }
-      return item;
-    });
-    setUploads(updatedUploads);
-    await saveState('uploads', updatedUploads);
+    const approvedItem = uploads.find(item => item.id === id);
+    if (!approvedItem) return;
+
+    await firebaseService.updateDoc('uploads', id, { status: 'approved' });
     
-    if (approvedItem) {
-      const newLogEntry = { adminUsername: currentUser.username, action: 'approved' as const, uploadId: id, uploadTitle: approvedItem!.title, timestamp: new Date() };
-      const updatedLog = [newLogEntry, ...auditLog];
-      setAuditLog(updatedLog);
-      await saveState('auditLog', updatedLog);
-    }
+    const newLogEntry: Omit<AuditLogEntry, 'id'> = { adminUsername: currentUser.username, action: 'approved', uploadId: id, uploadTitle: approvedItem.title, timestamp: new Date() };
+    await firebaseService.addDoc('auditLog', newLogEntry);
+
     setAlert({ message: `Submission #${id} has been approved.`, type: 'info' });
-  }, [currentUser, uploads, auditLog, saveState]);
+  }, [currentUser, uploads]);
 
   const handleReject = useCallback(async (id: number) => {
     if (!currentUser || !['admin', 'co-owner', 'owner'].includes(currentUser.role)) return;
+    
     const rejectedItem = uploads.find(item => item.id === id);
+    if (!rejectedItem) return;
+    
+    await firebaseService.deleteDoc('uploads', id);
 
-    const updatedUploads = uploads.filter(item => item.id !== id);
-    setUploads(updatedUploads);
-    await saveState('uploads', updatedUploads);
+    const newLogEntry: Omit<AuditLogEntry, 'id'> = { adminUsername: currentUser.username, action: 'rejected', uploadId: id, uploadTitle: rejectedItem.title, timestamp: new Date() };
+    await firebaseService.addDoc('auditLog', newLogEntry);
 
-    if (rejectedItem) {
-      const newLogEntry = { adminUsername: currentUser.username, action: 'rejected' as const, uploadId: id, uploadTitle: rejectedItem.title, timestamp: new Date() };
-      const updatedLog = [newLogEntry, ...auditLog];
-      setAuditLog(updatedLog);
-      await saveState('auditLog', updatedLog);
-    }
     setAlert({ message: `Submission #${id} has been rejected and removed.`, type: 'info' });
-  }, [uploads, currentUser, auditLog, saveState]);
+  }, [currentUser, uploads]);
   
   const handleRemove = useCallback(async (id: number) => {
     if (!currentUser || !['admin', 'co-owner', 'owner'].includes(currentUser.role)) return;
-    const updatedUploads = uploads.filter(item => item.id !== id);
-    setUploads(updatedUploads);
-    await saveState('uploads', updatedUploads);
+    await firebaseService.deleteDoc('uploads', id);
     setAlert({ message: `Post #${id} has been removed.`, type: 'info' });
-  }, [currentUser, uploads, saveState]);
+  }, [currentUser]);
 
   const handleRegister = useCallback(async (username: string, password: string) => {
-      if (users.some(u => u.username.toLowerCase() === username.toLowerCase())) {
+      const existingUser = await firebaseService.findUserByUsername(username);
+      if (existingUser) {
           setAlert({ message: 'Username already exists.', type: 'error' });
           return;
       }
       
       const role: UserRole = username.toLowerCase() === 'urwrldryan' ? 'owner' : 'user';
-      const newUser: User = { id: Date.now(), username, password, role };
-      const updatedUsers = [...users, newUser];
-      setUsers(updatedUsers);
-      await saveState('users', updatedUsers);
+      const newUser: Omit<User, 'id'> = { username, password, role };
+      const createdUser = await firebaseService.addDoc('users', newUser) as User;
       
-      setCurrentUser(newUser);
+      firebaseService.setCurrentUser(createdUser);
+      setCurrentUser(createdUser);
       setAlert({ message: `Welcome, ${username}! Your account has been created.`, type: 'success' });
-  }, [users, saveState]);
+  }, []);
   
   const handleLogin = useCallback(async (username: string, password: string) => {
-      const user = users.find(u => u.username.toLowerCase() === username.toLowerCase() && u.password === password);
-      if (user) {
+      const user = await firebaseService.findUserByUsername(username);
+      if (user && user.password === password) {
+          firebaseService.setCurrentUser(user);
           setCurrentUser(user);
           setAlert({ message: `Welcome back, ${user.username}!`, type: 'success' });
       } else {
           setAlert({ message: 'Invalid username or password.', type: 'error' });
       }
-  }, [users]);
+  }, []);
   
   const handleLogout = useCallback(async () => {
+      firebaseService.setCurrentUser(null);
       setCurrentUser(null);
       setActiveTab('main');
       setAlert({ message: 'You have been logged out.', type: 'info' });
@@ -256,56 +158,48 @@ const App: React.FC = () => {
   
   const handleSendMessage = useCallback(async (text: string) => {
     const username = currentUser?.username || 'Guest';
-    const newMessage: ChatMessage = { id: Date.now(), username: username, text, timestamp: new Date() };
-    
-    const updatedMessages = [...chatMessages, newMessage];
-    setChatMessages(updatedMessages);
-    await saveState('chatMessages', updatedMessages);
-  }, [currentUser, chatMessages, saveState]);
+    const newMessage: Omit<ChatMessage, 'id'> = { username: username, text, timestamp: new Date() };
+    await firebaseService.addDoc('chatMessages', newMessage);
+  }, [currentUser]);
 
   const handleChangeUsername = useCallback(async (newUsername: string) => {
     if (!currentUser) return false;
-    if (users.some(u => u.username.toLowerCase() === newUsername.toLowerCase() && u.id !== currentUser.id)) {
+    const existingUser = await firebaseService.findUserByUsername(newUsername);
+    if (existingUser && existingUser.id !== currentUser.id) {
         setAlert({ message: 'This username is already taken.', type: 'error' });
         return false;
     }
     const oldUsername = currentUser.username;
     
+    // Update the user document
+    await firebaseService.updateDoc('users', currentUser.id, { username: newUsername });
+
+    // In a real app, this would be a cloud function. Here we simulate cascading updates.
+    const updatePromises: Promise<void>[] = [];
+    uploads.filter(u => u.submittedBy === oldUsername).forEach(u => updatePromises.push(firebaseService.updateDoc('uploads', u.id, { submittedBy: newUsername })));
+    chatMessages.filter(m => m.username === oldUsername).forEach(m => updatePromises.push(firebaseService.updateDoc('chatMessages', m.id, { username: newUsername })));
+    auditLog.filter(l => l.adminUsername === oldUsername).forEach(l => updatePromises.push(firebaseService.updateDoc('auditLog', l.id, { adminUsername: newUsername })));
+    await Promise.all(updatePromises);
+
     const updatedUser = { ...currentUser, username: newUsername };
-    const updatedUsers = users.map(u => u.id === currentUser.id ? updatedUser : u);
-    const updatedUploads = uploads.map(u => u.submittedBy === oldUsername ? { ...u, submittedBy: newUsername } : u);
-    const updatedChatMessages = chatMessages.map(m => m.username === oldUsername ? { ...m, username: newUsername } : m);
-    const updatedAuditLog = auditLog.map(l => l.adminUsername === oldUsername ? { ...l, adminUsername: newUsername } : l);
-
-    await Promise.all([
-        saveState('users', updatedUsers),
-        saveState('uploads', updatedUploads),
-        saveState('chatMessages', updatedChatMessages),
-        saveState('auditLog', updatedAuditLog),
-    ]);
-
-    setUsers(updatedUsers);
-    setUploads(updatedUploads);
-    setChatMessages(updatedChatMessages);
-    setAuditLog(updatedAuditLog);
+    firebaseService.setCurrentUser(updatedUser);
     setCurrentUser(updatedUser);
     
     setAlert({ message: `Your username has been updated to ${newUsername}.`, type: 'success' });
     return true;
-  }, [currentUser, users, uploads, chatMessages, auditLog, saveState]);
+  }, [currentUser, users, uploads, chatMessages, auditLog]);
 
   const handleChangePassword = useCallback(async (newPassword: string) => {
     if (!currentUser) return false;
     
-    const updatedUser = { ...currentUser, password: newPassword };
-    const updatedUsers = users.map(u => u.id === currentUser.id ? updatedUser : u);
-    setUsers(updatedUsers);
-    await saveState('users', updatedUsers);
+    await firebaseService.updateDoc('users', currentUser.id, { password: newPassword });
 
+    const updatedUser = { ...currentUser, password: newPassword };
+    firebaseService.setCurrentUser(updatedUser);
     setCurrentUser(updatedUser);
     setAlert({ message: 'Your password has been changed successfully.', type: 'success' });
     return true;
-  }, [currentUser, users, saveState]);
+  }, [currentUser, users]);
 
   const handleUpdateUserRole = useCallback(async (userId: number, newRole: UserRole) => {
     if (currentUser?.role !== 'owner') {
@@ -316,11 +210,9 @@ const App: React.FC = () => {
         setAlert({ message: 'You cannot change your own role.', type: 'error' });
         return;
     }
-    const updatedUsers = users.map(u => u.id === userId ? { ...u, role: newRole } : u);
-    setUsers(updatedUsers);
-    await saveState('users', updatedUsers);
+    await firebaseService.updateDoc('users', userId, { role: newRole });
     setAlert({ message: 'User role has been updated.', type: 'success' });
-  }, [currentUser, users, saveState]);
+  }, [currentUser]);
 
   const handleDeleteUser = useCallback(async (userId: number) => {
       if (!currentUser || !['owner', 'co-owner'].includes(currentUser.role)) {
@@ -339,11 +231,13 @@ const App: React.FC = () => {
           return;
       }
 
-      const updatedUsers = users.filter(u => u.id !== userId);
-      setUsers(updatedUsers);
-      await saveState('users', updatedUsers);
+      await firebaseService.deleteDoc('users', userId);
       setAlert({ message: `User "${userToDelete.username}" has been deleted.`, type: 'success' });
-  }, [currentUser, users, saveState]);
+  }, [currentUser, users]);
+
+  useEffect(() => {
+    setIsGuestBannerVisible(isGuestMode);
+  }, [isGuestMode]);
 
   if (isAppLoading) {
     return (
@@ -353,7 +247,7 @@ const App: React.FC = () => {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                <h1 className="text-2xl font-bold text-slate-100">Loading your space...</h1>
+                <h1 className="text-2xl font-bold text-slate-100">Connecting to the cloud...</h1>
                 <p className="text-slate-400 mt-2">Please wait a moment.</p>
             </div>
         </div>
@@ -369,7 +263,6 @@ const App: React.FC = () => {
         <header className="text-center mb-8">
           <div className="flex justify-center items-center gap-4">
             <h1 className="text-4xl sm:text-5xl font-bold text-slate-50 tracking-tight">mvisd link finders</h1>
-            <SyncStatusIndicator status={syncStatus} />
           </div>
           <p className="text-slate-400 mt-2 text-lg">Upload, share, and moderate community content with ease.</p>
         </header>

@@ -29,6 +29,7 @@ export interface User {
 }
 
 export interface AuditLogEntry {
+  id: number;
   adminUsername: string;
   action: 'approved' | 'rejected';
   uploadId: number;

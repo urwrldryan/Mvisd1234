@@ -70,33 +70,38 @@ const UploadForm: React.FC<{
 };
 
 const AuthForm: React.FC<{
-    onRegister: (username: string, password: string) => void;
-    onLogin: (username: string, password: string) => void;
+    onRegister: (email: string, password: string, username: string) => void;
+    onLogin: (email: string, password: string) => void;
     setAlert: (alert: AlertMessage | null) => void;
 }> = ({ onRegister, onLogin, setAlert }) => {
     const [isLogin, setIsLogin] = useState(true);
+    const [email, setEmail] = useState('');
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!username.trim() || !password.trim()) {
-            setAlert({ message: 'Username and password cannot be empty.', type: 'error' });
+        if (!email.trim() || !password.trim()) {
+            setAlert({ message: 'Email and password cannot be empty.', type: 'error' });
             return;
         }
         if (isLogin) {
-            onLogin(username, password);
+            onLogin(email, password);
         } else {
+            if(!username.trim()) {
+                setAlert({ message: 'Username cannot be empty.', type: 'error' });
+                return;
+            }
             if (password !== confirmPassword) {
                 setAlert({ message: 'Passwords do not match.', type: 'error' });
                 return;
             }
-            if (password.length < 4) {
-                setAlert({ message: 'Password must be at least 4 characters.', type: 'error' });
+            if (password.length < 6) {
+                setAlert({ message: 'Password must be at least 6 characters.', type: 'error' });
                 return;
             }
-            onRegister(username, password);
+            onRegister(email, password, username);
         }
     };
 
@@ -105,10 +110,16 @@ const AuthForm: React.FC<{
             <h2 className="text-2xl font-bold text-center text-slate-100">{isLogin ? 'User Login' : 'Create Account'}</h2>
             <p className="mt-2 text-center text-slate-400">{isLogin ? 'Log in to submit links, chat, and manage your profile.' : 'Join the community to get started.'}</p>
             <form onSubmit={handleSubmit} className="mt-8 space-y-6">
-                <div>
-                    <label htmlFor="username" className="block text-sm font-medium text-slate-300 mb-1">Username</label>
-                    <input id="username" type="text" value={username} onChange={e => setUsername(e.target.value)} required className="w-full px-4 py-2 bg-gray-700/50 border border-gray-600 text-slate-100 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                 <div>
+                    <label htmlFor="email" className="block text-sm font-medium text-slate-300 mb-1">Email</label>
+                    <input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} required className="w-full px-4 py-2 bg-gray-700/50 border border-gray-600 text-slate-100 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500" />
                 </div>
+                {!isLogin && (
+                    <div>
+                        <label htmlFor="username" className="block text-sm font-medium text-slate-300 mb-1">Username</label>
+                        <input id="username" type="text" value={username} onChange={e => setUsername(e.target.value)} required className="w-full px-4 py-2 bg-gray-700/50 border border-gray-600 text-slate-100 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    </div>
+                )}
                 <div>
                     <label htmlFor="password" className="block text-sm font-medium text-slate-300 mb-1">Password</label>
                     <input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} required className="w-full px-4 py-2 bg-gray-700/50 border border-gray-600 text-slate-100 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500" />
@@ -135,8 +146,8 @@ const AuthForm: React.FC<{
 
 interface MainTabProps {
   currentUser: User | null;
-  onRegister: (username: string, password: string) => void;
-  onLogin: (username: string, password: string) => void;
+  onRegister: (email: string, password: string, username: string) => void;
+  onLogin: (email: string, password: string) => void;
   onUpload: (url: string) => void;
   setAlert: (alert: AlertMessage | null) => void;
 }

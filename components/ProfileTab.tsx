@@ -29,8 +29,8 @@ const ProfileTab: React.FC<ProfileTabProps> = ({ currentUser, onLogout, onChange
 
   const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (newPassword.length < 4) {
-      setAlert({ message: 'Password must be at least 4 characters long.', type: 'error' });
+    if (newPassword.length < 6) {
+      setAlert({ message: 'Password must be at least 6 characters long.', type: 'error' });
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -49,6 +49,7 @@ const ProfileTab: React.FC<ProfileTabProps> = ({ currentUser, onLogout, onChange
       <div>
         <h2 className="text-2xl font-bold text-slate-100 mb-1">Your Profile</h2>
         <p className="text-slate-400">Manage your account settings and preferences.</p>
+         <p className="text-slate-400 mt-2">Email: <span className="font-medium text-slate-300">{currentUser.email}</span></p>
       </div>
       
       <form onSubmit={handleUsernameChange} className="space-y-4">

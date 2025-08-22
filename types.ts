@@ -2,12 +2,13 @@
 export type UploadStatus = 'pending' | 'approved';
 
 export interface UploadItem {
-  id: number;
+  id: string;
   title: string;
   url: string;
   description?: string;
   status: UploadStatus;
   submittedBy: string; // username
+  timestamp: Date;
 }
 
 export type Tab = 'main' | 'community' | 'chat' | 'admin' | 'profile';
@@ -22,23 +23,24 @@ export interface AlertMessage {
 export type UserRole = 'owner' | 'co-owner' | 'admin' | 'user';
 
 export interface User {
-  id: number;
+  id: string; // Firestore document ID
+  uid: string; // Firebase Auth user ID
   username: string;
-  password: string;
+  email: string;
   role: UserRole;
 }
 
 export interface AuditLogEntry {
-  id: number;
+  id: string;
   adminUsername: string;
   action: 'approved' | 'rejected';
-  uploadId: number;
+  uploadId: string;
   uploadTitle: string;
   timestamp: Date;
 }
 
 export interface ChatMessage {
-  id: number;
+  id: string;
   username: string;
   text: string;
   timestamp: Date;

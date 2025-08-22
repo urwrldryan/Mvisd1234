@@ -5,16 +5,16 @@ import PreviewModal from './PreviewModal.tsx';
 
 interface AdminTabProps {
   uploads: UploadItem[];
-  onApprove: (id: number) => void;
-  onReject: (id: number) => void;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
   currentUser: User | null;
   allUsers: User[];
   auditLog: AuditLogEntry[];
-  onUpdateUserRole: (userId: number, newRole: UserRole) => void;
-  onDeleteUser: (userId: number) => void;
+  onUpdateUserRole: (userId: string, newRole: UserRole) => void;
+  onDeleteUser: (userId: string) => void;
 }
 
-const PendingItem: React.FC<{ item: UploadItem, onApprove: (id: number) => void, onReject: (id: number) => void, onPreview: (url: string) => void }> = ({ item, onApprove, onReject, onPreview }) => (
+const PendingItem: React.FC<{ item: UploadItem, onApprove: (id: string) => void, onReject: (id: string) => void, onPreview: (url: string) => void }> = ({ item, onApprove, onReject, onPreview }) => (
   <li className="p-4 bg-gray-800/50 border border-gray-700 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
     <div className="flex-grow">
       <h3 className="font-semibold text-slate-100">{item.title}</h3>
@@ -50,8 +50,8 @@ const ManagementDashboard: React.FC<{
   currentUser: User;
   allUsers: User[];
   auditLog: AuditLogEntry[];
-  onUpdateUserRole: (userId: number, newRole: UserRole) => void;
-  onDeleteUser: (userId: number) => void;
+  onUpdateUserRole: (userId: string, newRole: UserRole) => void;
+  onDeleteUser: (userId: string) => void;
 }> = ({ currentUser, allUsers, auditLog, onUpdateUserRole, onDeleteUser }) => {
   const handleDelete = (user: User) => {
     if (window.confirm(`Are you sure you want to delete user "${user.username}"? This action cannot be undone.`)) {
@@ -83,6 +83,7 @@ const ManagementDashboard: React.FC<{
                         <li key={user.id} className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                             <div>
                                 <span className="font-semibold text-slate-300">{user.username}</span>
+                                <span className="text-sm text-slate-400 ml-2">({user.email})</span>
                                 <span className={`ml-3 px-2 py-0.5 text-xs font-semibold rounded-full ${getRoleColor(user.role)}`}>
                                     {user.role}
                                 </span>
@@ -118,8 +119,8 @@ const ManagementDashboard: React.FC<{
             <div className="bg-gray-800/50 rounded-lg border border-gray-700 max-h-96 overflow-y-auto">
                 {auditLog.length > 0 ? (
                     <ul className="divide-y divide-gray-700">
-                        {auditLog.map((log, index) => (
-                            <li key={index} className="p-4">
+                        {auditLog.map((log) => (
+                            <li key={log.id} className="p-4">
                                 <div className="flex justify-between items-start gap-4">
                                     <div>
                                         <p className="text-sm text-slate-200">

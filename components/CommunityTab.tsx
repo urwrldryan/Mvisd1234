@@ -15,7 +15,7 @@ const UploadIcon: React.FC<{className: string}> = ({ className }) => (
 );
 
 
-const UploadItemCard: React.FC<{ item: UploadItem; currentUser: User | null; onRemove: (id: number) => void; }> = ({ item, currentUser, onRemove }) => {
+const UploadItemCard: React.FC<{ item: UploadItem; currentUser: User | null; onRemove: (id: string) => void; }> = ({ item, currentUser, onRemove }) => {
     const canRemove = currentUser && ['admin', 'co-owner', 'owner'].includes(currentUser.role);
     
     return (
@@ -48,7 +48,7 @@ interface CommunityTabProps {
   uploads: UploadItem[];
   currentUser: User | null;
   setActiveTab: (tab: Tab) => void;
-  onRemove: (id: number) => void;
+  onRemove: (id: string) => void;
 }
 
 const CommunityTab: React.FC<CommunityTabProps> = ({ uploads, currentUser, setActiveTab, onRemove }) => {

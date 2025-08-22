@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Tab, UploadItem, AlertMessage, User, AuditLogEntry, UserRole, ChatMessage } from './types.ts';
 import * as firebaseService from './services/firebase.ts';
+import { isFirebaseConfigValid } from './firebaseConfig.ts';
+import { User as FirebaseUser } from 'firebase/auth';
+import { orderBy } from 'firebase/firestore';
 import MainTab from './components/MainTab.tsx';
 import CommunityTab from './components/CommunityTab.tsx';
 import AdminTab from './components/AdminTab.tsx';
@@ -23,9 +26,55 @@ const BackgroundAnimation: React.FC = () => (
     </div>
 );
 
+const ConnectionTimeoutError: React.FC = () => (
+    <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
+        <div className="text-center p-8 bg-gray-800 rounded-lg shadow-xl max-w-lg ring-1 ring-yellow-500/50">
+            <h1 className="text-2xl font-bold text-yellow-400">Connection Timed Out</h1>
+            <p className="text-slate-300 mt-4">
+                The application could not connect to the Firebase backend.
+            </p>
+            <div className="text-left text-slate-400 mt-4 space-y-2">
+                <p>Please check the following:</p>
+                <ul className="list-disc list-inside space-y-1 pl-2">
+                    <li>Your internet connection is stable.</li>
+                    <li>
+                        In your <a href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">Firebase Console</a>, ensure that <strong>Cloud Firestore</strong> is enabled for the project <code className="bg-gray-700 p-1 rounded text-sm text-yellow-300">mvisd1234</code>.
+                    </li>
+                    <li>
+                        Your Firestore security rules allow read/write access.
+                    </li>
+                </ul>
+            </div>
+             <p className="text-slate-500 mt-6 text-sm">
+                If you've just created the database, please wait a few minutes and then refresh the page.
+            </p>
+        </div>
+    </div>
+);
+
 const App: React.FC = () => {
+    if (!isFirebaseConfigValid()) {
+        return (
+            <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
+                <div className="text-center p-8 bg-gray-800 rounded-lg shadow-xl max-w-lg ring-1 ring-red-500/50">
+                    <h1 className="text-2xl font-bold text-red-400">Firebase Configuration Missing</h1>
+                    <p className="text-slate-300 mt-4">
+                        This application requires a connection to a Firebase project to function.
+                    </p>
+                    <p className="text-slate-400 mt-2">
+                        Please open the <code className="bg-gray-700 p-1 rounded text-sm text-yellow-300">firebaseConfig.ts</code> file and replace the placeholder values with your project's configuration from the Firebase Console.
+                    </p>
+                     <p className="text-slate-500 mt-6 text-sm">
+                        After updating the configuration, please refresh the page.
+                    </p>
+                </div>
+            </div>
+        );
+    }
+  
   const [activeTab, setActiveTab] = useState<Tab>('main');
   const [alert, setAlert] = useState<AlertMessage | null>(null);
+  const [authUser, setAuthUser] = useState<FirebaseUser | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isGuestBannerVisible, setIsGuestBannerVisible] = useState(true);
   
@@ -35,29 +84,40 @@ const App: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   const [isAppLoading, setIsAppLoading] = useState(true);
+  const [connectionTimedOut, setConnectionTimedOut] = useState(false);
 
   const isGuestMode = !currentUser;
 
-  // Set up real-time listeners for all data collections on component mount.
   useEffect(() => {
-    const user = firebaseService.getCurrentUser();
-    setCurrentUser(user);
-    setIsGuestBannerVisible(!user);
-    
-    // The unsubscribe functions returned by onSnapshot will be called on cleanup.
-    const unsubUploads = firebaseService.onSnapshot('uploads', (data: UploadItem[]) => setUploads(data.sort((a, b) => b.id - a.id)));
-    const unsubUsers = firebaseService.onSnapshot('users', (data: User[]) => setUsers(data));
-    const unsubAuditLog = firebaseService.onSnapshot('auditLog', (data: AuditLogEntry[]) => setAuditLog(data.sort((a,b) => b.timestamp.getTime() - a.timestamp.getTime())));
-    const unsubChat = firebaseService.onSnapshot('chatMessages', (data: ChatMessage[]) => setChatMessages(data.sort((a,b) => a.timestamp.getTime() - b.timestamp.getTime())));
+    const unsubAuth = firebaseService.onAuthUserChanged(async (user) => {
+      setAuthUser(user);
+      if (user) {
+        const userProfile = await firebaseService.getUserProfile(user.uid);
+        setCurrentUser(userProfile);
+        setIsGuestBannerVisible(false);
+      } else {
+        setCurrentUser(null);
+        setIsGuestBannerVisible(true);
+      }
+      setIsAppLoading(false);
+    });
 
-    setIsAppLoading(false);
+    const unsubUploads = firebaseService.onSnapshot<UploadItem>('uploads', setUploads, orderBy('timestamp', 'desc'));
+    const unsubUsers = firebaseService.onSnapshot<User>('users', setUsers);
+    const unsubAuditLog = firebaseService.onSnapshot<AuditLogEntry>('auditLog', setAuditLog, orderBy('timestamp', 'desc'));
+    const unsubChat = firebaseService.onSnapshot<ChatMessage>('chatMessages', setChatMessages, orderBy('timestamp', 'asc'));
 
-    // Cleanup listeners on unmount to prevent memory leaks.
+    const connectionTimer = setTimeout(() => {
+        setConnectionTimedOut(true);
+    }, 12000);
+
     return () => {
+      unsubAuth();
       unsubUploads();
       unsubUsers();
       unsubAuditLog();
       unsubChat();
+      clearTimeout(connectionTimer);
     };
   }, []);
 
@@ -69,96 +129,83 @@ const App: React.FC = () => {
   }, [alert]);
 
   const handleUpload = useCallback(async (url: string) => {
-    if (!currentUser) {
-        setAlert({ message: "You're submitting as a Guest. Your submission is shared, but you should log in to have it tied to your account.", type: 'info' });
-    }
+    if (!currentUser && !isGuestMode) return;
     const submitter = currentUser?.username || 'Guest';
-    const newUpload: Omit<UploadItem, 'id'> = {
+    const newUpload = {
       title: url.replace(/^https?:\/\//, '').split('/')[0] || url,
       url: url,
-      status: 'pending',
+      status: 'pending' as const,
       description: 'A new user submission.',
-      submittedBy: submitter
+      submittedBy: submitter,
+      timestamp: new Date(), // This will be replaced by a server timestamp
     };
     await firebaseService.addDoc('uploads', newUpload);
     
-    if (currentUser) {
-      setAlert({ message: 'Upload successful! Your submission is pending approval.', type: 'success' });
-    }
+    setAlert({ message: currentUser ? 'Upload successful! Pending approval.' : "Guest submission successful! Pending approval.", type: 'success' });
     setActiveTab('community');
-  }, [currentUser]);
+  }, [currentUser, isGuestMode]);
 
-  const handleApprove = useCallback(async (id: number) => {
+  const handleApprove = useCallback(async (id: string) => {
     if (!currentUser || !['admin', 'co-owner', 'owner'].includes(currentUser.role)) return;
-    
     const approvedItem = uploads.find(item => item.id === id);
     if (!approvedItem) return;
-
     await firebaseService.updateDoc('uploads', id, { status: 'approved' });
-    
-    const newLogEntry: Omit<AuditLogEntry, 'id'> = { adminUsername: currentUser.username, action: 'approved', uploadId: id, uploadTitle: approvedItem.title, timestamp: new Date() };
+    const newLogEntry = { adminUsername: currentUser.username, action: 'approved' as const, uploadId: id, uploadTitle: approvedItem.title, timestamp: new Date() };
     await firebaseService.addDoc('auditLog', newLogEntry);
-
-    setAlert({ message: `Submission #${id} has been approved.`, type: 'info' });
+    setAlert({ message: `Submission has been approved.`, type: 'info' });
   }, [currentUser, uploads]);
 
-  const handleReject = useCallback(async (id: number) => {
+  const handleReject = useCallback(async (id: string) => {
     if (!currentUser || !['admin', 'co-owner', 'owner'].includes(currentUser.role)) return;
-    
     const rejectedItem = uploads.find(item => item.id === id);
     if (!rejectedItem) return;
-    
     await firebaseService.deleteDoc('uploads', id);
-
-    const newLogEntry: Omit<AuditLogEntry, 'id'> = { adminUsername: currentUser.username, action: 'rejected', uploadId: id, uploadTitle: rejectedItem.title, timestamp: new Date() };
+    const newLogEntry = { adminUsername: currentUser.username, action: 'rejected' as const, uploadId: id, uploadTitle: rejectedItem.title, timestamp: new Date() };
     await firebaseService.addDoc('auditLog', newLogEntry);
-
-    setAlert({ message: `Submission #${id} has been rejected and removed.`, type: 'info' });
+    setAlert({ message: `Submission has been rejected.`, type: 'info' });
   }, [currentUser, uploads]);
   
-  const handleRemove = useCallback(async (id: number) => {
+  const handleRemove = useCallback(async (id: string) => {
     if (!currentUser || !['admin', 'co-owner', 'owner'].includes(currentUser.role)) return;
     await firebaseService.deleteDoc('uploads', id);
-    setAlert({ message: `Post #${id} has been removed.`, type: 'info' });
+    setAlert({ message: `Post has been removed.`, type: 'info' });
   }, [currentUser]);
 
-  const handleRegister = useCallback(async (username: string, password: string) => {
+  const handleRegister = useCallback(async (email: string, password: string, username: string) => {
+    try {
       const existingUser = await firebaseService.findUserByUsername(username);
       if (existingUser) {
-          setAlert({ message: 'Username already exists.', type: 'error' });
-          return;
+        setAlert({ message: 'Username already exists.', type: 'error' });
+        return;
       }
-      
-      const role: UserRole = username.toLowerCase() === 'urwrldryan' ? 'owner' : 'user';
-      const newUser: Omit<User, 'id'> = { username, password, role };
-      const createdUser = await firebaseService.addDoc('users', newUser) as User;
-      
-      firebaseService.setCurrentUser(createdUser);
-      setCurrentUser(createdUser);
+      const userCredential = await firebaseService.registerWithEmail(email, password);
+      const role: UserRole = email.toLowerCase() === 'owner@example.com' ? 'owner' : 'user';
+      await firebaseService.createUserProfile(userCredential.user.uid, { username, email, role });
       setAlert({ message: `Welcome, ${username}! Your account has been created.`, type: 'success' });
+    } catch (error: any) {
+      setAlert({ message: error.message, type: 'error' });
+    }
   }, []);
   
-  const handleLogin = useCallback(async (username: string, password: string) => {
-      const user = await firebaseService.findUserByUsername(username);
-      if (user && user.password === password) {
-          firebaseService.setCurrentUser(user);
-          setCurrentUser(user);
-          setAlert({ message: `Welcome back, ${user.username}!`, type: 'success' });
-      } else {
-          setAlert({ message: 'Invalid username or password.', type: 'error' });
-      }
+  const handleLogin = useCallback(async (email: string, password: string) => {
+    try {
+      const userCredential = await firebaseService.loginWithEmail(email, password);
+      const userProfile = await firebaseService.getUserProfile(userCredential.user.uid);
+      setAlert({ message: `Welcome back, ${userProfile?.username}!`, type: 'success' });
+    } catch (error: any) {
+      setAlert({ message: 'Invalid email or password.', type: 'error' });
+    }
   }, []);
   
   const handleLogout = useCallback(async () => {
-      firebaseService.setCurrentUser(null);
-      setCurrentUser(null);
-      setActiveTab('main');
-      setAlert({ message: 'You have been logged out.', type: 'info' });
+    await firebaseService.logout();
+    setActiveTab('main');
+    setAlert({ message: 'You have been logged out.', type: 'info' });
   }, []);
   
   const handleSendMessage = useCallback(async (text: string) => {
     const username = currentUser?.username || 'Guest';
-    const newMessage: Omit<ChatMessage, 'id'> = { username: username, text, timestamp: new Date() };
+    const newMessage = { username, text, timestamp: new Date() }; // Timestamp is a placeholder
     await firebaseService.addDoc('chatMessages', newMessage);
   }, [currentUser]);
 
@@ -169,75 +216,50 @@ const App: React.FC = () => {
         setAlert({ message: 'This username is already taken.', type: 'error' });
         return false;
     }
-    const oldUsername = currentUser.username;
-    
-    // Update the user document
     await firebaseService.updateDoc('users', currentUser.id, { username: newUsername });
-
-    // In a real app, this would be a cloud function. Here we simulate cascading updates.
-    const updatePromises: Promise<void>[] = [];
-    uploads.filter(u => u.submittedBy === oldUsername).forEach(u => updatePromises.push(firebaseService.updateDoc('uploads', u.id, { submittedBy: newUsername })));
-    chatMessages.filter(m => m.username === oldUsername).forEach(m => updatePromises.push(firebaseService.updateDoc('chatMessages', m.id, { username: newUsername })));
-    auditLog.filter(l => l.adminUsername === oldUsername).forEach(l => updatePromises.push(firebaseService.updateDoc('auditLog', l.id, { adminUsername: newUsername })));
-    await Promise.all(updatePromises);
-
-    const updatedUser = { ...currentUser, username: newUsername };
-    firebaseService.setCurrentUser(updatedUser);
-    setCurrentUser(updatedUser);
-    
     setAlert({ message: `Your username has been updated to ${newUsername}.`, type: 'success' });
     return true;
-  }, [currentUser, users, uploads, chatMessages, auditLog]);
-
-  const handleChangePassword = useCallback(async (newPassword: string) => {
-    if (!currentUser) return false;
-    
-    await firebaseService.updateDoc('users', currentUser.id, { password: newPassword });
-
-    const updatedUser = { ...currentUser, password: newPassword };
-    firebaseService.setCurrentUser(updatedUser);
-    setCurrentUser(updatedUser);
-    setAlert({ message: 'Your password has been changed successfully.', type: 'success' });
-    return true;
-  }, [currentUser, users]);
-
-  const handleUpdateUserRole = useCallback(async (userId: number, newRole: UserRole) => {
-    if (currentUser?.role !== 'owner') {
-        setAlert({ message: 'Only the owner can change user roles.', type: 'error' });
-        return;
-    }
-    if (currentUser.id === userId) {
-        setAlert({ message: 'You cannot change your own role.', type: 'error' });
-        return;
-    }
-    await firebaseService.updateDoc('users', userId, { role: newRole });
-    setAlert({ message: 'User role has been updated.', type: 'success' });
   }, [currentUser]);
 
-  const handleDeleteUser = useCallback(async (userId: number) => {
-      if (!currentUser || !['owner', 'co-owner'].includes(currentUser.role)) {
-          setAlert({ message: 'You do not have permission to delete users.', type: 'error' });
-          return;
-      }
-      const userToDelete = users.find(u => u.id === userId);
-      if (!userToDelete) return;
+  const handleChangePassword = useCallback(async (newPassword: string) => {
+    if (!authUser) return false;
+    try {
+      await firebaseService.changePassword(newPassword);
+      setAlert({ message: 'Your password has been changed successfully.', type: 'success' });
+      return true;
+    } catch (error: any) {
+      setAlert({ message: `Password change failed: ${error.message}. You may need to log out and log back in.`, type: 'error' });
+      return false;
+    }
+  }, [authUser]);
 
-      if (userToDelete.role === 'owner') {
-          setAlert({ message: 'Cannot delete an owner account.', type: 'error' });
-          return;
-      }
-      if (currentUser.role === 'co-owner' && userToDelete.role === 'co-owner') {
-          setAlert({ message: 'Co-owners cannot delete other co-owners.', type: 'error' });
-          return;
-      }
+  const handleUpdateUserRole = useCallback(async (userId: string, newRole: UserRole) => {
+    if (currentUser?.role !== 'owner') return setAlert({ message: 'Only the owner can change roles.', type: 'error' });
+    if (currentUser.id === userId) return setAlert({ message: 'You cannot change your own role.', type: 'error' });
+    await firebaseService.updateDoc('users', userId, { role: newRole });
+    setAlert({ message: 'User role updated.', type: 'success' });
+  }, [currentUser]);
 
-      await firebaseService.deleteDoc('users', userId);
-      setAlert({ message: `User "${userToDelete.username}" has been deleted.`, type: 'success' });
+  const handleDeleteUser = useCallback(async (userId: string) => {
+    if (!currentUser || !['owner', 'co-owner'].includes(currentUser.role)) return setAlert({ message: 'You do not have permission.', type: 'error' });
+    const userToDelete = users.find(u => u.id === userId);
+    if (!userToDelete) return;
+    if (userToDelete.role === 'owner') return setAlert({ message: 'Cannot delete an owner account.', type: 'error' });
+    if (currentUser.role === 'co-owner' && userToDelete.role === 'co-owner') return setAlert({ message: 'Co-owners cannot delete other co-owners.', type: 'error' });
+
+    // Note: In a real app, deleting a user account and their associated content
+    // should be handled by a Cloud Function for security and data integrity.
+    await firebaseService.deleteDoc('users', userId);
+    setAlert({ message: `User "${userToDelete.username}" has been deleted.`, type: 'success' });
   }, [currentUser, users]);
 
   useEffect(() => {
     setIsGuestBannerVisible(isGuestMode);
   }, [isGuestMode]);
+
+  if (isAppLoading && connectionTimedOut) {
+    return <ConnectionTimeoutError />;
+  }
 
   if (isAppLoading) {
     return (
@@ -247,7 +269,7 @@ const App: React.FC = () => {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                <h1 className="text-2xl font-bold text-slate-100">Connecting to the cloud...</h1>
+                <h1 className="text-2xl font-bold text-slate-100">Connecting to Firebase...</h1>
                 <p className="text-slate-400 mt-2">Please wait a moment.</p>
             </div>
         </div>

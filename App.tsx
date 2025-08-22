@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { Tab, UploadItem, AlertMessage, User, AuditLogEntry, UserRole, ChatMessage } from './types.ts';
 import MainTab from './components/MainTab.tsx';
@@ -9,10 +8,11 @@ import ProfileTab from './components/ProfileTab.tsx';
 import Tabs from './components/Tabs.tsx';
 import Alert from './components/Alert.tsx';
 import SyncStatusIndicator from './components/SyncStatusIndicator.tsx';
+import GuestModeBanner from './components/GuestModeBanner.tsx';
 
-const getFromLocalStorage = <T,>(key: string, defaultValue: T): T => {
+const getFromStorage = <T,>(storage: Storage, key: string, defaultValue: T): T => {
   try {
-    const item = window.localStorage.getItem(key);
+    const item = storage.getItem(key);
     if (!item) return defaultValue;
 
     const data = JSON.parse(item);
@@ -63,41 +63,65 @@ const BackgroundAnimation: React.FC = () => (
 
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>('main');
-  const [uploads, setUploads] = useState<UploadItem[]>(() => getFromLocalStorage('uploads', []));
   const [alert, setAlert] = useState<AlertMessage | null>(null);
-  
-  const [users, setUsers] = useState<User[]>(() => getFromLocalStorage('users', [
+  const [currentUser, setCurrentUser] = useState<User | null>(getInitialUser);
+  const [isGuestBannerVisible, setIsGuestBannerVisible] = useState(true);
+
+  const isGuestMode = !currentUser;
+  const dataStorage = isGuestMode ? sessionStorage : localStorage;
+
+  const [uploads, setUploads] = useState<UploadItem[]>(() => getFromStorage(dataStorage, 'uploads', []));
+  const [users, setUsers] = useState<User[]>(() => getFromStorage(localStorage, 'users', [
     { id: 1, username: 'urwrldryan', password: 'BigBooger', role: 'owner' },
     { id: 2, username: 'sample_user', password: 'password', role: 'user' },
   ]));
-  const [currentUser, setCurrentUser] = useState<User | null>(() => getInitialUser());
-  const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(() => getFromLocalStorage('auditLog', []));
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => getFromLocalStorage('chatMessages', []));
+  const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(() => getFromStorage(dataStorage, 'auditLog', []));
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => getFromStorage(dataStorage, 'chatMessages', []));
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'saved' | 'error'>('idle');
 
-  const saveStateToLocalStorage = useCallback(async (key: string, data: any) => {
+  const saveState = useCallback(async (key: string, data: any) => {
+    // User data is always persistent, other data depends on login state.
+    const storage = key === 'users' ? localStorage : dataStorage;
     setSyncStatus('syncing');
     await new Promise(resolve => setTimeout(resolve, 400)); // Simulate network latency
     try {
-      localStorage.setItem(key, JSON.stringify(data));
+      storage.setItem(key, JSON.stringify(data));
       setSyncStatus('saved');
     } catch (error) {
-      console.error(`Failed to save to localStorage: ${key}`, error);
+      console.error(`Failed to save to storage: ${key}`, error);
       setSyncStatus('error');
     }
-  }, []);
+  }, [dataStorage]);
 
-  const removeStateFromLocalStorage = useCallback(async (key: string) => {
+  const removeState = useCallback(async (key: string) => {
+    const storage = dataStorage;
     setSyncStatus('syncing');
     await new Promise(resolve => setTimeout(resolve, 400));
     try {
-      localStorage.removeItem(key);
+      storage.removeItem(key);
       setSyncStatus('saved');
     } catch (error) {
-      console.error(`Failed to remove from localStorage: ${key}`, error);
+      console.error(`Failed to remove from storage: ${key}`, error);
       setSyncStatus('error');
     }
-  }, []);
+  }, [dataStorage]);
+  
+  // Reload data from appropriate storage on login/logout
+  useEffect(() => {
+    const newStorage = !currentUser ? sessionStorage : localStorage;
+    setUploads(getFromStorage(newStorage, 'uploads', []));
+    setChatMessages(getFromStorage(newStorage, 'chatMessages', []));
+    setAuditLog(getFromStorage(newStorage, 'auditLog', []));
+    
+    // Users are always loaded from localStorage, but we can re-fetch to be safe
+    setUsers(getFromStorage(localStorage, 'users', []));
+
+    if (currentUser) {
+        setIsGuestBannerVisible(false);
+    } else {
+        setIsGuestBannerVisible(true);
+    }
+  }, [currentUser]);
 
   useEffect(() => {
     if (syncStatus === 'saved' || syncStatus === 'error') {
@@ -111,35 +135,38 @@ const App: React.FC = () => {
       if (currentUser) {
         const remember = localStorage.getItem('rememberUser') === 'true';
         if (remember) {
-          await saveStateToLocalStorage('currentUser', currentUser);
+          localStorage.setItem('currentUser', JSON.stringify(currentUser));
           sessionStorage.removeItem('currentUser');
         } else {
           sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
-          await removeStateFromLocalStorage('currentUser');
+          localStorage.removeItem('currentUser');
         }
       } else {
         // On logout
         sessionStorage.removeItem('currentUser');
-        await removeStateFromLocalStorage('currentUser');
+        localStorage.removeItem('currentUser');
       }
     };
     syncUserSession();
-  }, [currentUser, saveStateToLocalStorage, removeStateFromLocalStorage]);
+  }, [currentUser]);
 
 
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
+      // Only listen to localStorage changes for cross-tab sync (sessionStorage doesn't fire this event)
+      if (e.storageArea !== localStorage) return;
+      
       if (e.key === 'chatMessages' && e.newValue) {
-        setChatMessages(getFromLocalStorage('chatMessages', []));
+        setChatMessages(getFromStorage(localStorage, 'chatMessages', []));
       }
       if (e.key === 'uploads' && e.newValue) {
-        setUploads(getFromLocalStorage('uploads', []));
+        setUploads(getFromStorage(localStorage, 'uploads', []));
       }
       if (e.key === 'users' && e.newValue) {
-        setUsers(getFromLocalStorage('users', []));
+        setUsers(getFromStorage(localStorage, 'users', []));
       }
       if (e.key === 'auditLog' && e.newValue) {
-        setAuditLog(getFromLocalStorage('auditLog', []));
+        setAuditLog(getFromStorage(localStorage, 'auditLog', []));
       }
     };
 
@@ -156,24 +183,26 @@ const App: React.FC = () => {
 
   const handleUpload = useCallback(async (url: string) => {
     if (!currentUser) {
-        setAlert({ message: 'You must be logged in to submit a link.', type: 'error' });
-        return;
+        setAlert({ message: 'Login to save submissions permanently. This link will be lost when you close the tab.', type: 'info' });
     }
+    const submitter = currentUser?.username || 'Guest';
     const newUpload: UploadItem = {
       id: Date.now(),
       title: url.replace(/^https?:\/\//, '').split('/')[0] || url,
       url: url,
       status: 'pending',
       description: 'A new user submission.',
-      submittedBy: currentUser.username
+      submittedBy: submitter
     };
     const updatedUploads = [newUpload, ...uploads];
     setUploads(updatedUploads);
-    await saveStateToLocalStorage('uploads', updatedUploads);
+    await saveState('uploads', updatedUploads);
     
-    setAlert({ message: 'Upload successful! Your submission is pending approval.', type: 'success' });
+    if (currentUser) {
+      setAlert({ message: 'Upload successful! Your submission is pending approval.', type: 'success' });
+    }
     setActiveTab('community');
-  }, [currentUser, uploads, saveStateToLocalStorage]);
+  }, [currentUser, uploads, saveState]);
 
   const handleApprove = useCallback(async (id: number) => {
     if (!currentUser || !['admin', 'co-owner', 'owner'].includes(currentUser.role)) return;
@@ -187,16 +216,16 @@ const App: React.FC = () => {
       return item;
     });
     setUploads(updatedUploads);
-    await saveStateToLocalStorage('uploads', updatedUploads);
+    await saveState('uploads', updatedUploads);
     
     if (approvedItem) {
       const newLogEntry = { adminUsername: currentUser.username, action: 'approved' as const, uploadId: id, uploadTitle: approvedItem!.title, timestamp: new Date() };
       const updatedLog = [newLogEntry, ...auditLog];
       setAuditLog(updatedLog);
-      await saveStateToLocalStorage('auditLog', updatedLog);
+      await saveState('auditLog', updatedLog);
     }
     setAlert({ message: `Submission #${id} has been approved.`, type: 'info' });
-  }, [currentUser, uploads, auditLog, saveStateToLocalStorage]);
+  }, [currentUser, uploads, auditLog, saveState]);
 
   const handleReject = useCallback(async (id: number) => {
     if (!currentUser || !['admin', 'co-owner', 'owner'].includes(currentUser.role)) return;
@@ -204,24 +233,24 @@ const App: React.FC = () => {
 
     const updatedUploads = uploads.filter(item => item.id !== id);
     setUploads(updatedUploads);
-    await saveStateToLocalStorage('uploads', updatedUploads);
+    await saveState('uploads', updatedUploads);
 
     if (rejectedItem) {
       const newLogEntry = { adminUsername: currentUser.username, action: 'rejected' as const, uploadId: id, uploadTitle: rejectedItem.title, timestamp: new Date() };
       const updatedLog = [newLogEntry, ...auditLog];
       setAuditLog(updatedLog);
-      await saveStateToLocalStorage('auditLog', updatedLog);
+      await saveState('auditLog', updatedLog);
     }
     setAlert({ message: `Submission #${id} has been rejected and removed.`, type: 'info' });
-  }, [uploads, currentUser, auditLog, saveStateToLocalStorage]);
+  }, [uploads, currentUser, auditLog, saveState]);
   
   const handleRemove = useCallback(async (id: number) => {
     if (!currentUser || !['admin', 'co-owner', 'owner'].includes(currentUser.role)) return;
     const updatedUploads = uploads.filter(item => item.id !== id);
     setUploads(updatedUploads);
-    await saveStateToLocalStorage('uploads', updatedUploads);
+    await saveState('uploads', updatedUploads);
     setAlert({ message: `Post #${id} has been removed.`, type: 'info' });
-  }, [currentUser, uploads, saveStateToLocalStorage]);
+  }, [currentUser, uploads, saveState]);
 
   const handleRegister = useCallback(async (username: string, password: string) => {
       if (users.some(u => u.username.toLowerCase() === username.toLowerCase())) {
@@ -232,43 +261,43 @@ const App: React.FC = () => {
       
       const updatedUsers = [...users, newUser];
       setUsers(updatedUsers);
-      await saveStateToLocalStorage('users', updatedUsers);
+      await saveState('users', updatedUsers);
       
-      await removeStateFromLocalStorage('rememberUser');
+      localStorage.removeItem('rememberUser');
       setCurrentUser(newUser);
       setAlert({ message: `Welcome, ${username}! Your account has been created.`, type: 'success' });
-  }, [users, saveStateToLocalStorage, removeStateFromLocalStorage]);
+  }, [users, saveState]);
   
   const handleLogin = useCallback(async (username: string, password: string, rememberMe: boolean) => {
       const user = users.find(u => u.username.toLowerCase() === username.toLowerCase() && u.password === password);
       if (user) {
           if (rememberMe) {
-            await saveStateToLocalStorage('rememberUser', 'true');
+            localStorage.setItem('rememberUser', 'true');
           } else {
-            await removeStateFromLocalStorage('rememberUser');
+            localStorage.removeItem('rememberUser');
           }
           setCurrentUser(user);
           setAlert({ message: `Welcome back, ${user.username}!`, type: 'success' });
       } else {
           setAlert({ message: 'Invalid username or password.', type: 'error' });
       }
-  }, [users, saveStateToLocalStorage, removeStateFromLocalStorage]);
+  }, [users]);
   
   const handleLogout = useCallback(async () => {
       setCurrentUser(null);
       setActiveTab('main');
-      await removeStateFromLocalStorage('rememberUser');
+      localStorage.removeItem('rememberUser');
       setAlert({ message: 'You have been logged out.', type: 'info' });
-  }, [removeStateFromLocalStorage]);
+  }, []);
   
   const handleSendMessage = useCallback(async (text: string) => {
-    if (!currentUser) return;
-    const newMessage: ChatMessage = { id: Date.now(), username: currentUser.username, text, timestamp: new Date() };
+    const username = currentUser?.username || 'Guest';
+    const newMessage: ChatMessage = { id: Date.now(), username: username, text, timestamp: new Date() };
     
     const updatedMessages = [...chatMessages, newMessage];
     setChatMessages(updatedMessages);
-    await saveStateToLocalStorage('chatMessages', updatedMessages);
-  }, [currentUser, chatMessages, saveStateToLocalStorage]);
+    await saveState('chatMessages', updatedMessages);
+  }, [currentUser, chatMessages, saveState]);
 
   const handleChangeUsername = useCallback(async (newUsername: string) => {
     if (!currentUser) return false;
@@ -285,10 +314,10 @@ const App: React.FC = () => {
     const updatedAuditLog = auditLog.map(l => l.adminUsername === oldUsername ? { ...l, adminUsername: newUsername } : l);
 
     await Promise.all([
-        saveStateToLocalStorage('users', updatedUsers),
-        saveStateToLocalStorage('uploads', updatedUploads),
-        saveStateToLocalStorage('chatMessages', updatedChatMessages),
-        saveStateToLocalStorage('auditLog', updatedAuditLog),
+        saveState('users', updatedUsers),
+        saveState('uploads', updatedUploads),
+        saveState('chatMessages', updatedChatMessages),
+        saveState('auditLog', updatedAuditLog),
     ]);
 
     setUsers(updatedUsers);
@@ -299,7 +328,7 @@ const App: React.FC = () => {
     
     setAlert({ message: `Your username has been updated to ${newUsername}.`, type: 'success' });
     return true;
-  }, [currentUser, users, uploads, chatMessages, auditLog, saveStateToLocalStorage]);
+  }, [currentUser, users, uploads, chatMessages, auditLog, saveState]);
 
   const handleChangePassword = useCallback(async (newPassword: string) => {
     if (!currentUser) return false;
@@ -307,12 +336,12 @@ const App: React.FC = () => {
     const updatedUser = { ...currentUser, password: newPassword };
     const updatedUsers = users.map(u => u.id === currentUser.id ? updatedUser : u);
     setUsers(updatedUsers);
-    await saveStateToLocalStorage('users', updatedUsers);
+    await saveState('users', updatedUsers);
 
     setCurrentUser(updatedUser);
     setAlert({ message: 'Your password has been changed successfully.', type: 'success' });
     return true;
-  }, [currentUser, users, saveStateToLocalStorage]);
+  }, [currentUser, users, saveState]);
 
   const handleUpdateUserRole = useCallback(async (userId: number, newRole: UserRole) => {
     if (currentUser?.role !== 'owner') {
@@ -325,9 +354,9 @@ const App: React.FC = () => {
     }
     const updatedUsers = users.map(u => u.id === userId ? { ...u, role: newRole } : u);
     setUsers(updatedUsers);
-    await saveStateToLocalStorage('users', updatedUsers);
+    await saveState('users', updatedUsers);
     setAlert({ message: 'User role has been updated.', type: 'success' });
-  }, [currentUser, users, saveStateToLocalStorage]);
+  }, [currentUser, users, saveState]);
 
   const handleDeleteUser = useCallback(async (userId: number) => {
       if (!currentUser || !['owner', 'co-owner'].includes(currentUser.role)) {
@@ -348,13 +377,14 @@ const App: React.FC = () => {
 
       const updatedUsers = users.filter(u => u.id !== userId);
       setUsers(updatedUsers);
-      await saveStateToLocalStorage('users', updatedUsers);
+      await saveState('users', updatedUsers);
       setAlert({ message: `User "${userToDelete.username}" has been deleted.`, type: 'success' });
-  }, [currentUser, users, saveStateToLocalStorage]);
+  }, [currentUser, users, saveState]);
 
   return (
-    <div className="min-h-screen bg-gray-900 text-slate-200 font-sans relative isolate overflow-hidden">
+    <div className={`min-h-screen bg-gray-900 text-slate-200 font-sans relative isolate overflow-hidden ${isGuestMode && isGuestBannerVisible ? 'pt-16' : ''}`}>
       <BackgroundAnimation />
+      {isGuestMode && isGuestBannerVisible && <GuestModeBanner onDismiss={() => setIsGuestBannerVisible(false)} onLoginClick={() => setActiveTab('main')} />}
       {alert && <Alert message={alert.message} type={alert.type} onClose={() => setAlert(null)} />}
       <div className="container mx-auto p-4 sm:p-6 md:p-8 max-w-5xl relative z-10">
         <header className="text-center mb-8">
@@ -370,7 +400,7 @@ const App: React.FC = () => {
           <div className="p-6 sm:p-8">
             {activeTab === 'main' && <MainTab currentUser={currentUser} onRegister={handleRegister} onLogin={handleLogin} onUpload={handleUpload} setAlert={setAlert} />}
             {activeTab === 'community' && <CommunityTab uploads={uploads} currentUser={currentUser} setActiveTab={setActiveTab} onRemove={handleRemove} />}
-            {activeTab === 'chat' && currentUser && <ChatTab messages={chatMessages} currentUser={currentUser} onSendMessage={handleSendMessage} setActiveTab={setActiveTab} />}
+            {activeTab === 'chat' && <ChatTab messages={chatMessages} currentUser={currentUser} onSendMessage={handleSendMessage} setActiveTab={setActiveTab} />}
             {activeTab === 'profile' && currentUser && <ProfileTab currentUser={currentUser} onLogout={handleLogout} onChangeUsername={handleChangeUsername} onChangePassword={handleChangePassword} setAlert={setAlert} />}
             {activeTab === 'admin' && <AdminTab uploads={uploads} onApprove={handleApprove} onReject={handleReject} currentUser={currentUser} allUsers={users} onUpdateUserRole={handleUpdateUserRole} onDeleteUser={handleDeleteUser} auditLog={auditLog} />}
           </div>

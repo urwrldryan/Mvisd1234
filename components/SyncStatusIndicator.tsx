@@ -36,10 +36,10 @@ const SyncStatusIndicator: React.FC<SyncStatusIndicatorProps> = ({ status }) => 
     error: { icon: <ErrorIcon />, text: 'Sync failed', color: 'text-red-400' },
   };
 
-  const current = config[status as Exclude<SyncStatus, 'idle'>];
+  const current = config[status];
 
   return (
-    <div className={`flex items-center gap-2 text-sm transition-opacity duration-300 ${status !== 'idle' ? 'opacity-100' : 'opacity-0'}`}>
+    <div className={`flex items-center gap-2 text-sm transition-opacity duration-300 opacity-100`}>
       {current.icon}
       <span className={`hidden sm:inline ${current.color}`}>{current.text}</span>
     </div>

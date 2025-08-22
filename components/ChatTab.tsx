@@ -1,10 +1,9 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { ChatMessage, User, Tab } from '../types.ts';
 
 interface ChatTabProps {
   messages: ChatMessage[];
-  currentUser: User;
+  currentUser: User | null;
   onSendMessage: (text: string) => void;
   setActiveTab: (tab: Tab) => void;
 }
@@ -12,6 +11,7 @@ interface ChatTabProps {
 const ChatTab: React.FC<ChatTabProps> = ({ messages, currentUser, onSendMessage, setActiveTab }) => {
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
+  const currentUsername = currentUser?.username || 'Guest';
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -27,10 +27,16 @@ const ChatTab: React.FC<ChatTabProps> = ({ messages, currentUser, onSendMessage,
 
   return (
     <div className="flex flex-col h-[70vh] sm:h-[65vh]">
-      <h2 className="text-2xl font-bold text-slate-100 mb-4 flex-shrink-0">Community Chat</h2>
+      <div className="flex-shrink-0 mb-4">
+        <h2 className="text-2xl font-bold text-slate-100">Community Chat</h2>
+        {!currentUser && (
+            <p className="text-sm text-slate-400">You are chatting as a guest. <button onClick={() => setActiveTab('main')} className="font-semibold text-indigo-400 hover:underline">Login</button> to save your conversations.</p>
+        )}
+      </div>
+
       <div className="flex-grow overflow-y-auto pr-2 -mr-2 space-y-4">
         {messages.map((msg) => {
-          const isCurrentUser = msg.username === currentUser.username;
+          const isCurrentUser = msg.username === currentUsername;
           return (
             <div key={msg.id} className={`flex flex-col ${isCurrentUser ? 'items-end' : 'items-start'}`}>
               <div

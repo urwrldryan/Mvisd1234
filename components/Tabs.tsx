@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Tab, User } from '../types.ts';
 
@@ -12,7 +11,7 @@ const Tabs: React.FC<TabsProps> = ({ activeTab, setActiveTab, currentUser }) => 
   const allTabs: { id: Tab; label: string; visible: () => boolean }[] = [
     { id: 'main', label: 'Main', visible: () => true },
     { id: 'community', label: 'Community', visible: () => true },
-    { id: 'chat', label: 'Chat', visible: () => !!currentUser },
+    { id: 'chat', label: 'Chat', visible: () => true }, // Now always visible
     { id: 'profile', label: 'Profile', visible: () => !!currentUser },
     { id: 'admin', label: 'Admin', visible: () => !!currentUser && ['admin', 'co-owner', 'owner'].includes(currentUser.role) },
   ];
